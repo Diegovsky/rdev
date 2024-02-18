@@ -35,7 +35,13 @@ struct Watcher {
 }
 
 fn dirname(path: &dyn AsRef<Path>) -> &Path {
-    path.as_ref().parent().unwrap_or(Path::new("."))
+    path.as_ref().parent().and_then(|i| {
+        if i == Path::new("") {
+            None
+        } else {
+            Some(i)
+        }
+    }).unwrap_or(Path::new("."))
 }
 
 impl Watcher {
@@ -131,6 +137,7 @@ fn client(Client { file, listen }: Client) -> RResult<Infallible> {
 
     // Listen to incoming requests from the server
     let listen = TcpListener::bind(listen)?;
+    log::info!("Listening for connections...");
 
     // Configure open_options to create a file with the executable bit set
     let mut open_options = OpenOptions::new();
@@ -148,8 +155,9 @@ fn client(Client { file, listen }: Client) -> RResult<Infallible> {
         // Don't forget to drop the file. Otherwise, changes won't be synced and running can fail.
         std::mem::drop(file);
 
-        log::info!("Running...");
-        Command::new(&file_path).spawn()?.wait()?;
+        let mut command = Command::new(&file_path);
+        log::info!("Running {:?}...", command);
+        command.spawn()?.wait()?;
     }
 }
 
