@@ -1,5 +1,5 @@
 use cli::{parse_args, Args, SubCommand};
-use color_eyre::eyre::{eyre, Context, ContextCompat};
+use color_eyre::eyre::ContextCompat;
 use flate2::{
     bufread::{ZlibDecoder, ZlibEncoder},
     Compression,
