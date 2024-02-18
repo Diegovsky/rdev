@@ -36,13 +36,10 @@ struct Watcher {
 }
 
 fn dirname(path: &dyn AsRef<Path>) -> &Path {
-    path.as_ref().parent().and_then(|i| {
-        if i == Path::new("") {
-            None
-        } else {
-            Some(i)
-        }
-    }).unwrap_or(Path::new("."))
+    path.as_ref()
+        .parent()
+        .and_then(|i| if i == Path::new("") { None } else { Some(i) })
+        .unwrap_or(Path::new("."))
 }
 
 impl Watcher {
@@ -77,7 +74,7 @@ impl Watcher {
     fn files_changed(&mut self) -> RResult<HashSet<&OsStr>> {
         Ok(self
             .inotify
-            .read_events_blocking(&mut *self.buf)?
+            .read_events_blocking(&mut self.buf)?
             .filter_map(|e| e.name)
             .collect())
     }
@@ -96,7 +93,9 @@ fn strip(file: &Path, output: &Path) -> RResult<File> {
 
 fn server(Server { file, client }: Server) -> RResult<Infallible> {
     let file_path = Path::new(&file);
-    let filename = file_path.file_name().context("Expected file name, got '..'")?;
+    let filename = file_path
+        .file_name()
+        .context("Expected file name, got '..'")?;
 
     let tmp_filename = Path::new("/tmp/").join(filename);
 
@@ -116,7 +115,7 @@ fn server(Server { file, client }: Server) -> RResult<Infallible> {
             let mut encoder = ZlibEncoder::new(file, Compression::fast());
 
             // Then, we connect to the runner.
-            let mut tcp = BufWriter::new(TcpStream::connect(client.clone())?);
+            let mut tcp = BufWriter::new(TcpStream::connect(client)?);
 
             log::info!("Sending file...");
             // And we send the file. This operation sends the compressed output.
@@ -134,7 +133,8 @@ fn server(Server { file, client }: Server) -> RResult<Infallible> {
 fn client(Client { file, listen }: Client) -> RResult<Infallible> {
     let file_path = Path::new(&file);
     // We do this to make sure `file` has a "." if it is just a name.
-    let file_path = dirname(&file_path).join(file_path.file_name().context("Expected filename, got ..")?);
+    let file_path =
+        dirname(&file_path).join(file_path.file_name().context("Expected filename, got ..")?);
 
     // Listen to incoming requests from the server
     let listen = TcpListener::bind(listen)?;

@@ -16,12 +16,12 @@ pub enum SubCommand {
 }
 
 fn file(args: &mut Arguments) -> RResult<String> {
-    args.free_from_str::<String>().context("Missing FILE argument")
+    args.free_from_str::<String>()
+        .context("Missing FILE argument")
 }
 
 fn address(args: &mut Arguments) -> RResult<SocketAddr> {
-    args
-        .free_from_str::<String>()
+    args.free_from_str::<String>()
         .context("Missing ADDR argument")?
         .parse()
         .context("Failed to parse socket address")
@@ -45,7 +45,6 @@ pub const HELP: &str = "\
     Addr:                When building, it is the address of the builder.
                          When running, the address of the runner.";
 
-
 pub fn parse_args() -> RResult<Args> {
     let mut args = Arguments::from_env();
     if args.contains(["-h", "--help"]) {
@@ -55,10 +54,15 @@ pub fn parse_args() -> RResult<Args> {
     let subcommand = args.subcommand()?.context("Missing subcommand")?;
     let args = &mut args;
     let command = match &*subcommand {
-        "build" => SubCommand::Server(Server { file: file(args)?, client: address(args)? }),
-        "run" => SubCommand::Client(Client { file: file(args)?, listen: address(args)? }),
+        "build" => SubCommand::Server(Server {
+            file: file(args)?,
+            client: address(args)?,
+        }),
+        "run" => SubCommand::Client(Client {
+            file: file(args)?,
+            listen: address(args)?,
+        }),
         sub => return Err(eyre!("Invalid subcommand {}", sub)),
     };
     Ok(Args::SubCommand { is_quiet, command })
 }
-
