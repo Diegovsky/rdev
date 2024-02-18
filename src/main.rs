@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::{collections::HashSet, convert::Infallible, ffi::OsStr};
 use std::{os::unix::fs::OpenOptionsExt, path::Path, process::ExitCode};
 use std::{fs::{File, OpenOptions}, io::{BufReader, BufWriter}, net::{SocketAddr, TcpListener, TcpStream}, process::Command,};
-use color_eyre::eyre::{ eyre, ContextCompat };
+use color_eyre::eyre::{ eyre, Context, ContextCompat };
 use flate2::{bufread::{ZlibDecoder, ZlibEncoder}, Compression};
 use inotify::{WatchDescriptor, WatchMask};
 
@@ -121,11 +121,11 @@ fn run(args: SubCommand) -> RResult<Infallible> {
 
 
 const HELP: &str = "\
-    USAGE: rdev <FLAGS> <COMMAND> <FILE> <ADDR>
+    USAGE: rdev [FLAGS] <COMMAND> <FILE> <ADDR>
     
-    Command:
-        build
-        run
+    Commands:
+        build            Watches the file for changes, and sends it to the runner.
+        run              Listens for the builder, receives and runs the file.
 
     Flags:
         -q, --quiet      Tells the program to not output information, except for errors.
@@ -136,9 +136,7 @@ const HELP: &str = "\
                          When running, the filename to save to save the file.
 
     Addr:                When building, it is the address of the builder.
-                         When running, the address of the runner.
-            ";
-
+                         When running, the address of the runner.";
 
 enum Args {
     Help,
@@ -155,23 +153,26 @@ fn parse_args() -> RResult<Args> {
     if args.contains(["-h", "--help"]) {
         return Ok(Args::Help)
     }
-    let subcommand = args.subcommand()?.context("Missing subcommand")?;
     let is_quiet = args.contains(["-q", "--quiet"]);
+    let subcommand = args.subcommand()?.context("Missing subcommand")?;
+    let file = args.free_from_str().context("Missing FILE argument")?;
+    let addr = args.free_from_str().context("Missing ADDR argument")?;
     let command = match &*subcommand {
-        "build" => SubCommand::Server(Server{ file: args.free_from_str()?, client: args.free_from_str::<SocketAddr>()? }),
-        "run" => SubCommand::Client(Client { file: args.free_from_str()?, listen: args.free_from_str::<SocketAddr>()? }),
+        "build" => SubCommand::Server(Server{ file, client: addr }),
+        "run" => SubCommand::Client(Client { file, listen: addr }),
         sub => return Err(eyre!("Invalid subcommand {}", sub))
     };
     Ok(Args::SubCommand { is_quiet, command })
 } 
 
-
 fn main() -> ExitCode {
-    color_eyre::install().unwrap();
+  color_eyre::config::HookBuilder::default()
+        .display_env_section(false)
+        .install().unwrap();
     let args = match parse_args() {
         Ok(it) => it,
         Err(err) => {
-            eprintln!("Error: {:?}\n\n{}", err, HELP);
+            eprintln!("Error: {}\n\n{}", err, HELP);
             return ExitCode::FAILURE
         },
     };
