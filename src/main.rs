@@ -1,3 +1,4 @@
+use cli::{parse_args, Args, SubCommand};
 use color_eyre::eyre::{eyre, Context, ContextCompat};
 use flate2::{
     bufread::{ZlibDecoder, ZlibEncoder},
@@ -168,54 +169,8 @@ fn run(args: SubCommand) -> RResult<Infallible> {
     }
 }
 
-const HELP: &str = "\
-    USAGE: rdev [FLAGS] <COMMAND> <FILE> <ADDR>
-    
-    Commands:
-        build            Watches the file for changes, and sends it to the runner.
-        run              Listens for the builder, receives and runs the file.
-
-    Flags:
-        -q, --quiet      Tells the program to not output information, except for errors.
-
-        -h, --help       Shows this message.
-
-    File:                When building, it is the file to be sent to the runner.
-                         When running, the filename to save to save the file.
-
-    Addr:                When building, it is the address of the builder.
-                         When running, the address of the runner.";
-
-enum Args {
-    Help,
-    SubCommand { is_quiet: bool, command: SubCommand },
-}
-
-enum SubCommand {
-    Server(Server),
-    Client(Client),
-}
-
-fn parse_args() -> RResult<Args> {
-    let mut args = pico_args::Arguments::from_env();
-    if args.contains(["-h", "--help"]) {
-        return Ok(Args::Help);
-    }
-    let is_quiet = args.contains(["-q", "--quiet"]);
-    let subcommand = args.subcommand()?.context("Missing subcommand")?;
-    let file = args.free_from_str().context("Missing FILE argument")?;
-    let addr = args
-        .free_from_str::<String>()
-        .context("Missing ADDR argument")?
-        .parse()
-        .context("Failed to parse socket address")?;
-    let command = match &*subcommand {
-        "build" => SubCommand::Server(Server { file, client: addr }),
-        "run" => SubCommand::Client(Client { file, listen: addr }),
-        sub => return Err(eyre!("Invalid subcommand {}", sub)),
-    };
-    Ok(Args::SubCommand { is_quiet, command })
-}
+mod cli;
+use cli::HELP;
 
 fn main() -> ExitCode {
     color_eyre::config::HookBuilder::default()
