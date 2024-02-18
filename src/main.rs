@@ -61,13 +61,11 @@ impl Watcher {
     }
 }
 
-fn strip(file: &Path, output: Option<&Path>) -> RResult<File> {
-    let mut cmd = Command::new("strip");
-    if let Some(output) = output {
-        cmd.args(["-o".as_ref(), output.as_os_str()]);
-    }
-    cmd.arg(file).spawn()?.wait()?;
-    Ok(File::open(output.unwrap_or(file))?)
+fn strip(file: &Path, output: &Path) -> RResult<File> {
+    Command::new("strip")
+        .args(["-o".as_ref(), output.as_os_str()])
+        .arg(file).spawn()?.wait()?;
+    Ok(File::open(output)?)
 }
 
 
@@ -75,12 +73,13 @@ fn strip(file: &Path, output: Option<&Path>) -> RResult<File> {
 fn server(Server { file, client }: Server) -> RResult<Infallible> {
     let file = Path::new(&file);
     let filename = file.file_name().context("Expected file name, got '..'")?;
+    let tmp_filename = Path::new("/tmp/").join(filename);
     let mut watcher = Watcher::new(dirname(&file))?;
     watcher.start_watching()?;
     loop {
         if watcher.files_changed()?.contains(filename) {
             watcher.stop_watching()?;
-            let file = strip(file, Some(Path::new("/tmp/tempfile2")))?;
+            let file = strip(file, &tmp_filename)?;
             let file = BufReader::new(file);
             let mut encoder = ZlibEncoder::new(file, Compression::fast());
             let mut tcp = BufWriter::new(TcpStream::connect(client.clone())?);
