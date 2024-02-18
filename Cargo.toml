@@ -1,0 +1,12 @@
+[package]
+name = "rdev"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+color-eyre = { version = "0.6.2", default-features=false, features=["track-caller"] }
+env_logger = { version = "0.11.2", default-features=false, features=["auto-color", "humantime"] }
+flate2 = "1.0.28"
+inotify = { version = "0.10.2", default-features=false }
+log = "0.4.20"
+pico-args = "0.5.0"
