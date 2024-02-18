@@ -1,22 +1,30 @@
+use color_eyre::eyre::{eyre, Context, ContextCompat};
+use flate2::{
+    bufread::{ZlibDecoder, ZlibEncoder},
+    Compression,
+};
+use inotify::{WatchDescriptor, WatchMask};
 use std::io::Write;
 use std::path::PathBuf;
 use std::{collections::HashSet, convert::Infallible, ffi::OsStr};
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufReader, BufWriter},
+    net::{SocketAddr, TcpListener, TcpStream},
+    process::Command,
+};
 use std::{os::unix::fs::OpenOptionsExt, path::Path, process::ExitCode};
-use std::{fs::{File, OpenOptions}, io::{BufReader, BufWriter}, net::{SocketAddr, TcpListener, TcpStream}, process::Command,};
-use color_eyre::eyre::{ eyre, Context, ContextCompat };
-use flate2::{bufread::{ZlibDecoder, ZlibEncoder}, Compression};
-use inotify::{WatchDescriptor, WatchMask};
 
 use color_eyre::Result as RResult;
 
 struct Server {
     client: SocketAddr,
-    file: String
+    file: String,
 }
 
 struct Client {
     listen: SocketAddr,
-    file: String
+    file: String,
 }
 
 struct Watcher {
@@ -38,13 +46,16 @@ impl Watcher {
             folder: folder.into(),
             buf,
             inotify,
-            watch_descriptor: None
+            watch_descriptor: None,
         })
     }
 
     fn start_watching(&mut self) -> RResult<()> {
         if self.watch_descriptor.is_none() {
-            self.watch_descriptor = Some(self.inotify.watches().add(&self.folder, WatchMask::CLOSE | WatchMask::MOVED_TO | WatchMask::ATTRIB )?);
+            self.watch_descriptor = Some(self.inotify.watches().add(
+                &self.folder,
+                WatchMask::CLOSE | WatchMask::MOVED_TO | WatchMask::ATTRIB,
+            )?);
         }
         Ok(())
     }
@@ -57,36 +68,57 @@ impl Watcher {
     }
 
     fn files_changed(&mut self) -> RResult<HashSet<&OsStr>> {
-        Ok(self.inotify.read_events_blocking(&mut *self.buf)?.filter_map(|e| e.name).collect())
+        Ok(self
+            .inotify
+            .read_events_blocking(&mut *self.buf)?
+            .filter_map(|e| e.name)
+            .collect())
     }
 }
 
+/// Removes debug information from a file `file`, saves it at the path `output` and returns a
+/// newly-opened stripped [`File`].
 fn strip(file: &Path, output: &Path) -> RResult<File> {
     Command::new("strip")
         .args(["-o".as_ref(), output.as_os_str()])
-        .arg(file).spawn()?.wait()?;
+        .arg(file)
+        .spawn()?
+        .wait()?;
     Ok(File::open(output)?)
 }
 
-
-
 fn server(Server { file, client }: Server) -> RResult<Infallible> {
-    let file = Path::new(&file);
-    let filename = file.file_name().context("Expected file name, got '..'")?;
+    let file_path = Path::new(&file);
+    let filename = file_path.file_name().context("Expected file name, got '..'")?;
+
     let tmp_filename = Path::new("/tmp/").join(filename);
-    let mut watcher = Watcher::new(dirname(&file))?;
+
+    let mut watcher = Watcher::new(dirname(&file_path))?;
     watcher.start_watching()?;
     loop {
+        // Check if the watched file was changed
         if watcher.files_changed()?.contains(filename) {
+            // Stop watching for changes temporarily to prevent the event from getting
+            // re-triggered. This is needed because we open the file in the following lines.
             watcher.stop_watching()?;
-            let file = strip(file, &tmp_filename)?;
+            // The only step that can't be done natively as a `Read` wrapper.
+            let file = strip(file_path, &tmp_filename)?;
+
+            // After striping finishes, we wrap the file in buffered reader and compresser.
             let file = BufReader::new(file);
             let mut encoder = ZlibEncoder::new(file, Compression::fast());
+
+            // Then, we connect to the runner.
             let mut tcp = BufWriter::new(TcpStream::connect(client.clone())?);
+
             log::info!("Sending file...");
+            // And we send the file. This operation sends the compressed output.
             std::io::copy(&mut encoder, &mut tcp)?;
+
+            // We then flush the stream to make sure it's done.
             tcp.flush()?;
             log::info!("Done!");
+            // And finally, we begin watching for changes again
             watcher.start_watching()?;
         }
     }
@@ -94,20 +126,30 @@ fn server(Server { file, client }: Server) -> RResult<Infallible> {
 
 fn client(Client { file, listen }: Client) -> RResult<Infallible> {
     let file_path = Path::new(&file);
+    // We do this to make sure `file` has a "." if it is just a name.
+    let file_path = dirname(&file_path).join(file_path.file_name().context("Expected filename, got ..")?);
+
+    // Listen to incoming requests from the server
     let listen = TcpListener::bind(listen)?;
+
+    // Configure open_options to create a file with the executable bit set
     let mut open_options = OpenOptions::new();
     open_options.create(true).write(true).mode(0o766);
     loop {
-        {
-            let (con, _) = listen.accept()?;
-            log::info!("Got file...");
-            let mut con = ZlibDecoder::new(BufReader::new(con));
-            let mut file = BufWriter::new(open_options.open(file_path)?);
-            log::info!("Decompressing...");
-            std::io::copy(&mut con, &mut file)?;
-        }
+        let (con, _) = listen.accept()?;
+        log::info!("Got file...");
+        let mut con = ZlibDecoder::new(BufReader::new(con));
+        let mut file = BufWriter::new(open_options.open(&file_path)?);
+        log::info!("Decompressing...");
+        // In one fell swoop, we receive, decompress and write to the file.
+        // It's way faster than doing it one at a time.
+        std::io::copy(&mut con, &mut file)?;
+
+        // Don't forget to drop the file. Otherwise, changes won't be synced and running can fail.
+        std::mem::drop(file);
+
         log::info!("Running...");
-        Command::new(file_path).spawn()?.wait()?;
+        Command::new(&file_path).spawn()?.wait()?;
     }
 }
 
@@ -117,7 +159,6 @@ fn run(args: SubCommand) -> RResult<Infallible> {
         SubCommand::Server(s) => server(s),
     }
 }
-
 
 const HELP: &str = "\
     USAGE: rdev [FLAGS] <COMMAND> <FILE> <ADDR>
@@ -139,50 +180,60 @@ const HELP: &str = "\
 
 enum Args {
     Help,
-    SubCommand { is_quiet: bool, command: SubCommand }
+    SubCommand { is_quiet: bool, command: SubCommand },
 }
 
 enum SubCommand {
     Server(Server),
-    Client(Client)
+    Client(Client),
 }
 
 fn parse_args() -> RResult<Args> {
     let mut args = pico_args::Arguments::from_env();
     if args.contains(["-h", "--help"]) {
-        return Ok(Args::Help)
+        return Ok(Args::Help);
     }
     let is_quiet = args.contains(["-q", "--quiet"]);
     let subcommand = args.subcommand()?.context("Missing subcommand")?;
     let file = args.free_from_str().context("Missing FILE argument")?;
-    let addr = args.free_from_str().context("Missing ADDR argument")?;
+    let addr = args
+        .free_from_str::<String>()
+        .context("Missing ADDR argument")?
+        .parse()
+        .context("Failed to parse socket address")?;
     let command = match &*subcommand {
-        "build" => SubCommand::Server(Server{ file, client: addr }),
+        "build" => SubCommand::Server(Server { file, client: addr }),
         "run" => SubCommand::Client(Client { file, listen: addr }),
-        sub => return Err(eyre!("Invalid subcommand {}", sub))
+        sub => return Err(eyre!("Invalid subcommand {}", sub)),
     };
     Ok(Args::SubCommand { is_quiet, command })
-} 
+}
 
 fn main() -> ExitCode {
-  color_eyre::config::HookBuilder::default()
+    color_eyre::config::HookBuilder::default()
         .display_env_section(false)
-        .install().unwrap();
+        .install()
+        .unwrap();
+    // this could use a let-else but I need to have access to the error.
     let args = match parse_args() {
         Ok(it) => it,
         Err(err) => {
             eprintln!("Error: {}\n\n{}", err, HELP);
-            return ExitCode::FAILURE
-        },
+            return ExitCode::FAILURE;
+        }
     };
     match args {
         Args::Help => println!("{}", HELP),
         Args::SubCommand { is_quiet, command } => {
-            let level = if is_quiet { log::LevelFilter::Info } else { log::LevelFilter::Error };
+            let level = if is_quiet {
+                log::LevelFilter::Error
+            } else {
+                log::LevelFilter::Info
+            };
             env_logger::builder().filter_level(level).init();
             if let Err(err) = run(command) {
                 eprintln!("Error: {:?}", err);
-                return ExitCode::FAILURE
+                return ExitCode::FAILURE;
             }
         }
     }
