@@ -1,0 +1,38 @@
+RDEV(1)
+
+# NAME
+rdev - develop remotely and run locally
+
+# SYNOPSIS
+*rdev* [*-qh*] _command_ _file_ _address_
+
+# DESCRIPTION
+*rdev* builds an executable and sends it to another machine to be run.
+
+# COMMAND
+*build*
+	Starts a build server. The server watches the _file_ for changes.
+	When the watched file changes, it gets stripped of debug
+	information, compressed and sent over to the *runner* located at _address_.
+
+*run*
+	Starts a run server. The server watches the _file_ for changes.
+	When the watched file changes, it gets stripped of debug
+	information, compressed and sent over to the *runner*.
+
+# ADDRESS
+The address is anything that can be any string in the format
+"<host_name>:<port>".
+
+Examples:
+	- localhost:8080
+	- ssh.mymachine.net:8080
+
+# OPTIONS
+\-q, --quiet
+	Tells the program not to output information, except for errors.
+
+\-h, --help
+	Shows a help message and exits.
+
+; vim: set ft=scdoc ts=4:
