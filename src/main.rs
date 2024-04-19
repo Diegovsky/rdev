@@ -5,7 +5,7 @@ use flate2::{
     Compression,
 };
 use inotify::{WatchDescriptor, WatchMask};
-use std::io::Write;
+use std::{io::Write, time::Duration};
 use std::path::PathBuf;
 use std::{collections::HashSet, convert::Infallible, ffi::OsStr};
 use std::{
@@ -107,6 +107,8 @@ fn server(Server { file, client }: Server) -> RResult<Infallible> {
             // Stop watching for changes temporarily to prevent the event from getting
             // re-triggered. This is needed because we open the file in the following lines.
             watcher.stop_watching()?;
+            // Wait a little bit just to make sure we're getting the latest version of the file.
+            std::thread::sleep(Duration::from_millis(150));
             // The only step that can't be done natively as a `Read` wrapper.
             let file = strip(file_path, &tmp_filename)?;
 
