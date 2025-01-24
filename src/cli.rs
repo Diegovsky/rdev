@@ -1,9 +1,9 @@
-use std::net::SocketAddr;
+use std::{ffi::{OsStr, OsString}, net::SocketAddr};
 
 use color_eyre::eyre::{eyre, Context, ContextCompat, Result as RResult};
 use pico_args::Arguments;
 
-use crate::{Client, Server};
+use crate::{Receiver, RunAction, Sender};
 
 pub enum Args {
     Help,
@@ -11,8 +11,8 @@ pub enum Args {
 }
 
 pub enum SubCommand {
-    Server(Server),
-    Client(Client),
+    Server(Sender),
+    Client(Receiver),
 }
 
 fn file(args: &mut Arguments) -> RResult<String> {
@@ -25,6 +25,20 @@ fn address(args: &mut Arguments) -> RResult<SocketAddr> {
         .context("Missing ADDR argument")?
         .parse()
         .context("Failed to parse socket address")
+}
+
+fn parse_action(value: &str) -> RResult<RunAction> {
+    let (verb, arg): (&str, Option<&str>) = if value.contains(":") {
+        todo!()
+    } else {
+        todo!()
+    };
+    if value == "recv" {
+        Ok(RunAction::ReceivedFile)
+    } else {
+
+        Ok(RunAction::Script(value.to_owned()))
+    }
 }
 
 pub const HELP: &str = "\
@@ -51,16 +65,19 @@ pub fn parse_args() -> RResult<Args> {
         return Ok(Args::Help);
     }
     let is_quiet = args.contains(["-q", "--quiet"]);
+    let action = args.opt_value_from_fn(["-a", "--action"], parse_action)?;
+
     let subcommand = args.subcommand()?.context("Missing subcommand")?;
     let args = &mut args;
     let command = match &*subcommand {
-        "build" => SubCommand::Server(Server {
+        "build" => SubCommand::Server(Sender {
             file: file(args)?,
-            client: address(args)?,
+            receiver_addr: address(args)?,
         }),
-        "run" => SubCommand::Client(Client {
+        "run" => SubCommand::Client(Receiver {
             file: file(args)?,
             listen: address(args)?,
+            on_receive: todo!(),
         }),
         sub => return Err(eyre!("Invalid subcommand {}", sub)),
     };

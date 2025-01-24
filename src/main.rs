@@ -18,14 +18,28 @@ use std::{os::unix::fs::OpenOptionsExt, path::Path, process::ExitCode};
 
 use color_eyre::Result as RResult;
 
-struct Server {
-    client: SocketAddr,
+mod cli;
+
+#[derive(Clone, Debug)]
+pub enum RunAction {
+    ReceivedFile,
+    Script(String)
+}
+
+#[derive(Clone, Debug)]
+pub enum BuildAction {
+    WatchFile,
+}
+
+struct Sender {
+    receiver_addr: SocketAddr,
     file: String,
 }
 
-struct Client {
+struct Receiver {
     listen: SocketAddr,
     file: String,
+    on_receive: RunAction
 }
 
 struct Watcher {
@@ -91,7 +105,7 @@ fn strip(file: &Path, output: &Path) -> RResult<File> {
     Ok(File::open(output)?)
 }
 
-fn server(Server { file, client }: Server) -> RResult<Infallible> {
+fn sender(Sender { file, receiver_addr: client }: Sender) -> RResult<Infallible> {
     let file_path = Path::new(&file);
     let filename = file_path
         .file_name()
@@ -132,11 +146,12 @@ fn server(Server { file, client }: Server) -> RResult<Infallible> {
     }
 }
 
-fn client(Client { file, listen }: Client) -> RResult<Infallible> {
+fn receiver(Receiver { file, listen, on_receive }: Receiver) -> RResult<Infallible> {
     let file_path = Path::new(&file);
     // We do this to make sure `file` has a "." if it is just a name.
     let file_path =
         dirname(&file_path).join(file_path.file_name().context("Expected filename, got ..")?);
+    let file_path = Path::new(&file_path);
 
     // Listen to incoming requests from the server
     let listen = TcpListener::bind(listen)?;
@@ -149,16 +164,24 @@ fn client(Client { file, listen }: Client) -> RResult<Infallible> {
         let (con, _) = listen.accept()?;
         log::info!("Got file...");
         let mut con = ZlibDecoder::new(BufReader::new(con));
-        let mut file = BufWriter::new(open_options.open(&file_path)?);
+        let mut file = BufWriter::new(open_options.open(file_path)?);
         log::info!("Decompressing...");
         // In one fell swoop, we receive, decompress and write to the file.
         // It's way faster than doing it one at a time.
         std::io::copy(&mut con, &mut file)?;
 
-        // Don't forget to drop the file. Otherwise, changes won't be synced and running can fail.
+        // Don't forget to close the file. Otherwise, changes won't be synced and running can fail.
         std::mem::drop(file);
 
-        let mut command = Command::new(&file_path);
+        let mut command =
+            match on_receive {
+                RunAction::ReceivedFile => {
+                    Command::new(file_path)
+                }
+                RunAction::Script(ref script_name) => {
+                    Command::new(script_name)
+                }
+            };
         log::info!("Running {:?}...", command);
         command.spawn()?.wait()?;
     }
@@ -166,13 +189,10 @@ fn client(Client { file, listen }: Client) -> RResult<Infallible> {
 
 fn run(args: SubCommand) -> RResult<Infallible> {
     match args {
-        SubCommand::Client(c) => client(c),
-        SubCommand::Server(s) => server(s),
+        SubCommand::Client(c) => receiver(c),
+        SubCommand::Server(s) => sender(s),
     }
 }
-
-mod cli;
-use cli::HELP;
 
 fn main() -> ExitCode {
     color_eyre::config::HookBuilder::default()
@@ -183,12 +203,12 @@ fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(it) => it,
         Err(err) => {
-            eprintln!("Error: {}\n\n{}", err, HELP);
+            eprintln!("Error: {}\n\n{}", err, cli::HELP);
             return ExitCode::FAILURE;
         }
     };
     match args {
-        Args::Help => println!("{}", HELP),
+        Args::Help => println!("{}", cli::HELP),
         Args::SubCommand { is_quiet, command } => {
             let level = if is_quiet {
                 log::LevelFilter::Error

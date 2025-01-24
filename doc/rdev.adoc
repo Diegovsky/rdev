@@ -1,0 +1,49 @@
+= rdev(1)
+Diego Augusto
+:doctype: manpage
+
+== NAME
+rdev - develop remotely and run locally
+
+== SYNOPSIS
+
+*rdev* [*-qh*] _COMMAND_ _ADDRESS_ _FILE_
+
+== DESCRIPTION
+
+*rdev* builds an executable and sends it to another machine to be run.
+
+== COMMAND
+
+*build*:: Starts a sender server. The server watches the _file_ for
+changes. When the watched file changes, it gets stripped of debug
+information, compressed and sent over to the *runner* located at
+_address_.
+
+*run*:: Starts a receiver server. The server binds to the *address* and
+waits for a file to be received. When it receives a file, it
+decompresses it and executes an *ACTION*.
+
+== ADDRESS
+
+The address is anything that can be any string in the format "<hostname>:<port>".
+
+.Examples:
+* localhost:8080
+* mycoolwebsite.com:7878
+
+== ACTIONS
+
+Actions are ways to adapt `rdev` to your usecase. Since `rdev` is
+built with simple one-file executables in mind, the default action is to
+just run the received file. 
+
+`recv`:: Runs received file (DEFAULT) 
+`run=<path>`:: Runs the program at `path`, passing the received file’s
+absolute path as the first command line argument.
+
+== OPTIONS
+
+-q, –quiet:: Tells the program not to output information, except for errors.
+-h, –help:: Shows a help message and exits.
+
